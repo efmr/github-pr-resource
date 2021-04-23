@@ -7,13 +7,20 @@ import (
 	"sort"
 	"strings"
 	"strconv"
+	"github.com/shurcooL/githubv4"
 )
 
 // Check (business logic)
 func Check(request CheckRequest, manager Github) (CheckResponse, error) {
 	var response CheckResponse
 
-	pulls, err := manager.ListOpenPullRequests()
+	// Filter out pull request if it does not have a filtered state
+	filterStates := []githubv4.PullRequestState{githubv4.PullRequestStateOpen}
+	if len(request.Source.States) > 0 {
+		filterStates = request.Source.States
+	}
+
+	pulls, err := manager.ListPullRequests(filterStates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get last commits: %s", err)
 	}
@@ -32,16 +39,19 @@ Loop:
 		if !disableSkipCI && ContainsSkipCI(p.Title) {
 			continue
 		}
+
 		// [ci skip]/[skip ci] in Commit message
 		if !disableSkipCI && ContainsSkipCI(p.Tip.Message) {
 			continue
 		}
+
 		// Filter pull request if the BaseBranch does not match the one specified in source
 		if request.Source.BaseBranch != "" && p.PullRequestObject.BaseRefName != request.Source.BaseBranch {
 			continue
 		}
+
 		// Filter out commits that are too old.
-		if !p.Tip.CommittedDate.Time.After(request.Version.CommittedDate) {
+		if !p.UpdatedDate().Time.After(request.Version.CommittedDate) {
 			continue
 		}
 
@@ -66,6 +76,11 @@ Loop:
 
 		// Filter out forks.
 		if request.Source.DisableForks && p.IsCrossRepository {
+			continue
+		}
+
+		// Filter out drafts.
+		if request.Source.IgnoreDrafts && p.IsDraft {
 			continue
 		}
 

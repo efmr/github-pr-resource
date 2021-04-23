@@ -25,16 +25,19 @@ Make sure to check out [#migrating](#migrating) to learn more.
 | `access_token`              | Yes      |                                  | A Github Access Token with repository access (required for setting status on commits). N.B. If you want github-pr-resource to work with a private repository. Set `repo:full` permissions on the access token you create on GitHub. If it is a public repository, `repo:status` is enough. |
 | `v3_endpoint`               | No       | `https://api.github.com`         | Endpoint to use for the V3 Github API (Restful).                                                                                                                                                                                                                                           |
 | `v4_endpoint`               | No       | `https://api.github.com/graphql` | Endpoint to use for the V4 Github API (Graphql).                                                                                                                                                                                                                                           |
-| `paths`                     | No       | `terraform/*/*.tf`               | Only produce new versions if the PR includes changes to files that match one or more glob patterns or prefixes.                                                                                                                                                                            |
-| `ignore_paths`              | No       | `.ci/`                           | Inverse of the above. Pattern syntax is documented in [filepath.Match](https://golang.org/pkg/path/filepath/#Match), or a path prefix can be specified (e.g. `.ci/` will match everything in the `.ci` directory).                                                                         |
+| `paths`                     | No       | `["terraform/*/*.tf"]`           | Only produce new versions if the PR includes changes to files that match one or more glob patterns or prefixes.                                                                                                                                                                            |
+| `ignore_paths`              | No       | `[".ci/"]`                       | Inverse of the above. Pattern syntax is documented in [filepath.Match](https://golang.org/pkg/path/filepath/#Match), or a path prefix can be specified (e.g. `.ci/` will match everything in the `.ci` directory).                                                                         |
 | `disable_ci_skip`           | No       | `true`                           | Disable ability to skip builds with `[ci skip]` and `[skip ci]` in commit message or pull request title.                                                                                                                                                                                   |
 | `skip_ssl_verification`     | No       | `true`                           | Disable SSL/TLS certificate validation on git and API clients. Use with care!                                                                                                                                                                                                              |
 | `disable_forks`             | No       | `true`                           | Disable triggering of the resource if the pull request's fork repository is different to the configured repository.                                                                                                                                                                        |
+| `ignore_drafts`             | No       | `false`                          | Disable triggering of the resource if the pull request is in Draft status.                                                                                                                                                                                                                 |
 | `required_review_approvals` | No       | `2`                              | Disable triggering of the resource if the pull request does not have at least `X` approved review(s).                                                                                                                                                                                      |
 | `git_crypt_key`             | No       | `AEdJVENSWVBUS0VZAAAAA...`       | Base64 encoded git-crypt key. Setting this will unlock / decrypt the repository with git-crypt. To get the key simply execute `git-crypt export-key -- - | base64` in an encrypted repository.                                                                                             |
-| `pr`                    | No       | `34`                             | Only return commits from specified pull request number (ignores all commits from other pull requests)                                                                                                                                                                                      |
 | `base_branch`               | No       | `master`                         | Name of a branch. The pipeline will only trigger on pull requests against the specified branch.                                                                                                                                                                                            |
 | `labels`                    | No       | `["bug", "enhancement"]`         | The labels on the PR. The pipeline will only trigger on pull requests having at least one of the specified labels.                                                                                                                                                                         |
+| `disable_git_lfs`           | No       | `true`                           | Disable Git LFS, skipping an attempt to convert pointers of files tracked into their corresponding objects when checked out into a working copy.                                                                                                                                           |
+| `states`                    | No       | `["OPEN", "MERGED"]`             | The PR states to select (`OPEN`, `MERGED` or `CLOSED`). The pipeline will only trigger on pull requests matching one of the specified states. Default is ["OPEN"].                                                                                                                         |
+| `pr`                        | No       | `34`                             | Only return commits from specified pull request number (ignores all commits from other pull requests)                                                                                                                                                                                      |
 
 Notes:
  - If `v3_endpoint` is set, `v4_endpoint` must also be set (and the other way around).
@@ -52,6 +55,7 @@ A version is represented as follows:
 - `pr`: The pull request number.
 - `commit`: The commit SHA.
 - `committed`: Timestamp of when the commit was committed. Used to filter subsequent checks.
+- `approved_review_count`: The number of reviews approving of the PR.
 
 If several commits are pushed to a given PR at the same time, the last commit will be the new version.
 
@@ -69,7 +73,9 @@ generate notifications over the webhook. So if you have a repository with little
 | `skip_download`      | No       | `true`   | Use with `get_params` in a `put` step to do nothing on the implicit get.           |
 | `integration_tool`   | No       | `rebase` | The integration tool to use, `merge`, `rebase` or `checkout`. Defaults to `merge`. |
 | `git_depth`          | No       | `1`      | Shallow clone the repository using the `--depth` Git option                        |
+| `submodules`       | No       | `true` | Recursively clone git submodules. Defaults to false.                        |
 | `list_changed_files` | No       | `true`   | Generate a list of changed files and save alongside metadata                       |
+| `fetch_tags`       | No       | `true`     | Fetch tags from remote repository                                                  |
 
 Clones the base (e.g. `master` branch) at the latest commit, and merges the pull request at the specified commit
 into master. This ensures that we are both testing and setting status on the exact commit that was requested in
@@ -81,14 +87,13 @@ requested version and the metadata emitted by `get` are available to your tasks 
 - `.git/resource/changed_files` (if enabled by `list_changed_files`)
 
 The information in `metadata.json` is also available as individual files in the `.git/resource` directory, e.g. the `base_sha`
-is available as `.git/resource/base_sha`. For a complete list of available (individual) metadata files, please check the code 
+is available as `.git/resource/base_sha`. For a complete list of available (individual) metadata files, please check the code
 [here](https://github.com/telia-oss/github-pr-resource/blob/master/in.go#L66).
 
 When specifying `skip_download` the pull request volume mounted to subsequent tasks will be empty, which is a problem
 when you set e.g. the pending status before running the actual tests. The workaround for this is to use an alias for
 the `put` (see https://github.com/telia-oss/github-pr-resource/issues/32 for more details).
-
-git-crypt encrypted repositories will automatically be decrypted when the `git_crypt_key` is set in the source configuration.
+Example here:
 
 ```yaml
 put: update-status <-- Use an alias for the pull-request resource
@@ -98,6 +103,8 @@ params:
     status: pending
 get_params: {skip_download: true}
 ```
+
+git-crypt encrypted repositories will automatically be decrypted when the `git_crypt_key` is set in the source configuration.
 
 Note that, should you retrigger a build in the hopes of testing the last commit to a PR against a newer version of
 the base, Concourse will reuse the volume (i.e. not trigger a new `get`) if it still exists, which can produce
