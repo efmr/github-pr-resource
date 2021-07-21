@@ -24,6 +24,7 @@ type Github interface {
 	ListModifiedFiles(int) ([]string, error)
 	PostComment(string, string) error
 	GetPullRequest(string, string) (*PullRequest, error)
+	GetPullRequestDetails(string) (*PullRequest, error)
 	GetChangedFiles(string, string) ([]ChangedFileObject, error)
 	UpdateCommitStatus(string, string, string, string, string, string) error
 	DeletePreviousComments(string) error
@@ -168,6 +169,70 @@ func (m *GithubClient) ListPullRequests(prStates []githubv4.PullRequestState) ([
 		}
 		vars["prCursor"] = query.Repository.PullRequests.PageInfo.EndCursor
 	}
+	return response, nil
+}
+
+// GetPullRequestDetails gets the last commit on specific pull request
+func (m *GithubClient) GetPullRequestDetails(prNumber string) (*PullRequest, error) {
+	pr, err := strconv.Atoi(prNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert pull request number to int: %s", err)
+	}
+
+	var query struct {
+		Repository struct {
+			PullRequest struct {
+				PullRequestObject
+				Commits struct {
+					Edges []struct {
+						Node struct {
+							Commit CommitObject
+						}
+					}
+				} `graphql:"commits(last:$commitsLast)"`
+				Reviews struct {
+					TotalCount int
+				} `graphql:"reviews(states: $prReviewStates)"`
+				Labels struct {
+					Edges []struct {
+						Node struct {
+							LabelObject
+						}
+					}
+				} `graphql:"labels(first:$labelsFirst)"`
+			} `graphql:"pullRequest(number:$prNumber)"`
+		} `graphql:"repository(owner:$repositoryOwner,name:$repositoryName)"`
+	}
+
+	vars := map[string]interface{}{
+		"repositoryOwner": githubv4.String(m.Owner),
+		"repositoryName":  githubv4.String(m.Repository),
+		"prNumber":        githubv4.Int(pr),
+		"commitsLast":     githubv4.Int(1),
+		"prReviewStates":  []githubv4.PullRequestReviewState{githubv4.PullRequestReviewStateApproved},
+		"labelsFirst":     githubv4.Int(100),
+	}
+
+	var response *PullRequest
+
+	if err := m.V4.Query(context.TODO(), &query, vars); err != nil {
+		return nil, err
+	}
+
+	p := query.Repository.PullRequest
+	labels := make([]LabelObject, len(p.Labels.Edges))
+	for _, l := range p.Labels.Edges {
+		labels = append(labels, l.Node.LabelObject)
+	}
+
+	c := p.Commits.Edges[0]
+	response = &PullRequest{
+		PullRequestObject:   p.PullRequestObject,
+		Tip:                 c.Node.Commit,
+		ApprovedReviewCount: p.Reviews.TotalCount,
+		Labels:              labels,
+	}
+
 	return response, nil
 }
 

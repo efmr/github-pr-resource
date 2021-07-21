@@ -1,6 +1,7 @@
 package resource_test
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/shurcooL/githubv4"
@@ -181,7 +182,7 @@ func TestCheck(t *testing.T) {
 				Repository:   "itsdalmo/test-repository",
 				AccessToken:  "oauthtoken",
 				DisableForks: true,
-				PR: "3",
+				PR:           "3",
 			},
 			version:      resource.Version{},
 			pullRequests: testPullRequests,
@@ -195,7 +196,7 @@ func TestCheck(t *testing.T) {
 				Repository:   "itsdalmo/test-repository",
 				AccessToken:  "oauthtoken",
 				DisableForks: true,
-				PR: "3",
+				PR:           "3",
 			},
 			version:      resource.NewVersion(testPullRequests[2]),
 			pullRequests: testPullRequests,
@@ -296,6 +297,7 @@ func TestCheck(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			github := new(fakes.FakeGithub)
 			pullRequests := []*resource.PullRequest{}
+			var specifiedPullRequest *resource.PullRequest
 			filterStates := []githubv4.PullRequestState{githubv4.PullRequestStateOpen}
 			if len(tc.source.States) > 0 {
 				filterStates = tc.source.States
@@ -307,8 +309,14 @@ func TestCheck(t *testing.T) {
 						break
 					}
 				}
+
+				if strconv.Itoa(tc.pullRequests[i].Number) == tc.source.PR {
+					specifiedPullRequest = tc.pullRequests[i]
+				}
 			}
+
 			github.ListPullRequestsReturns(pullRequests, nil)
+			github.GetPullRequestDetailsReturns(specifiedPullRequest, nil)
 
 			for i, file := range tc.files {
 				github.ListModifiedFilesReturnsOnCall(i, file, nil)
@@ -320,7 +328,12 @@ func TestCheck(t *testing.T) {
 			if assert.NoError(t, err) {
 				assert.Equal(t, tc.expected, output)
 			}
-			assert.Equal(t, 1, github.ListPullRequestsCallCount())
+
+			if tc.source.PR == "" {
+				assert.Equal(t, 1, github.ListPullRequestsCallCount())
+			} else {
+				assert.Equal(t, 1, github.GetPullRequestDetailsCallCount())
+			}
 		})
 	}
 }

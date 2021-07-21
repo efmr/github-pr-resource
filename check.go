@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"strconv"
+	"strings"
+
 	"github.com/shurcooL/githubv4"
 )
 
@@ -14,19 +15,31 @@ import (
 func Check(request CheckRequest, manager Github) (CheckResponse, error) {
 	var response CheckResponse
 
-	// Filter out pull request if it does not have a filtered state
-	filterStates := []githubv4.PullRequestState{githubv4.PullRequestStateOpen}
-	if len(request.Source.States) > 0 {
-		filterStates = request.Source.States
-	}
+	specifiedPr := request.Source.PR
 
-	pulls, err := manager.ListPullRequests(filterStates)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get last commits: %s", err)
+	var pulls []*PullRequest
+	var err error
+
+	if specifiedPr == "" {
+		// Filter out pull request if it does not have a filtered state
+		filterStates := []githubv4.PullRequestState{githubv4.PullRequestStateOpen}
+		if len(request.Source.States) > 0 {
+			filterStates = request.Source.States
+		}
+
+		pulls, err = manager.ListPullRequests(filterStates)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get last commits: %s", err)
+		}
+	} else {
+		pull, err := manager.GetPullRequestDetails(request.Source.PR)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve pull request: %s", err)
+		}
+		pulls = []*PullRequest{pull}
 	}
 
 	disableSkipCI := request.Source.DisableCISkip
-	specifiedPr := request.Source.PR
 
 Loop:
 	for _, p := range pulls {
